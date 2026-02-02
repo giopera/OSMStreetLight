@@ -5,6 +5,58 @@ function MoveCall(action) { //action: 0: map moved, 1: high zoom layer added, 2:
 	loadXML(lefttop.lat,lefttop.lng,rightbottom.lat,rightbottom.lng, action);
 }
 
+var g_loadedIDs = new Set();
+
+// In-memory cache for OSM elements: key = "type:id" (e.g. "node:123" or "way:456")
+// Uses Map + order array to implement a simple LRU with a cap.
+var g_cache = new Map();
+var g_cacheOrder = [];
+var g_cacheCap = 500;
+// Keep track of the latest successful AJAX call (bbox string and keys)
+var g_latestCall = { bbox: "", keys: new Set() };
+
+function cacheTouch(key) {
+	// move key to most-recent position
+	const idx = g_cacheOrder.indexOf(key);
+	if (idx !== -1) {
+		g_cacheOrder.splice(idx, 1);
+		g_cacheOrder.push(key);
+	}
+}
+
+function trimCache() {
+	// Trim oldest entries until at or below cap, but never remove entries referenced by latestCall
+	while (g_cache.size > g_cacheCap) {
+		if (g_cacheOrder.length === 0) break;
+		const oldest = g_cacheOrder.shift();
+		if (g_latestCall.keys && g_latestCall.keys.has(oldest)) {
+			// keep it: move to end and continue
+			g_cacheOrder.push(oldest);
+			// if everything is in latestCall, break to avoid infinite loop
+			const removable = g_cacheOrder.find(k => !g_latestCall.keys.has(k));
+			if (!removable) break;
+			continue;
+		}
+		g_cache.delete(oldest);
+	}
+}
+
+function cacheAdd(key, value, isLatest) {
+	if (g_cache.has(key)) {
+		// update stored value and touch
+		g_cache.set(key, value);
+		cacheTouch(key);
+	} else {
+		g_cache.set(key, value);
+		g_cacheOrder.push(key);
+		trimCache();
+	}
+	if (isLatest) {
+		if (!g_latestCall.keys) g_latestCall.keys = new Set();
+		g_latestCall.keys.add(key);
+	}
+}
+
 function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high zoom layer added, 2: low zoom layer added, 3: layer removed, 4: streetlights layer removed, 5: language updated
 	
 	let hasHighZoomLayer = false, hasLowZoomLayer = false, zoomWarning = 1;
@@ -182,13 +234,17 @@ function loadData(bbox) {
 		type: 'GET',
 		crossDomain: true,
 		success: function(data) {
+			// mark this as latest call (store the request text for reference) and clear keys
+			g_latestCall.bbox = XMLRequestText;
+			g_latestCall.keys = new Set();
+			// parse and mark as latest
 			if (loadingcounter==1) {
 				$( "#loading_text" ).html("")
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
 			loadingcounter--;
-			parseOSM(data);
+			parseOSM(data, true);
 		},
 		error: function(jqXHR, textStatus, errorThrown){
 			
@@ -235,13 +291,17 @@ function loadDataLowZoom(bbox)
 		type: 'GET',
 		crossDomain: true,
 		success: function(data){
+				// mark this as latest lowzoom call and clear keys
+				g_latestCall.bbox = XMLRequestTextLowZoom;
+				g_latestCall.keys = new Set();
+				// parse and mark as latest
 			if (loadingcounter==1) {
 				$( "#loading_text" ).html("")
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
 			loadingcounter--;
-			parseOSMlowZoom(data);
+				parseOSMlowZoom(data, true);
 		},
 		error: function(jqXHR, textStatus, errorThrown) {
 			
@@ -265,7 +325,7 @@ function loadDataLowZoom(bbox)
 	});
 }
 
-function parseOSM(data)
+function parseOSM(data, isLatest)
 {
 	//console.log(data);
 	let MarkerArray = new Array();
@@ -274,6 +334,14 @@ function parseOSM(data)
 	AviationLayer.clearLayers();
 	LitStreetsLayer.clearLayers();
 	UnLitStreetsLayer.clearLayers();
+
+	if (data === false) {
+		// when asked to remove data we also clear latestCall keys
+		if (isLatest) {
+			g_latestCall.keys = new Set();
+		}
+		return;
+	}
 
 	$(data).find('node,way').each(function() {
 		let EleID = $(this).attr("id");
@@ -553,6 +621,26 @@ function parseOSM(data)
 					}
 
 					MarkerArray.push(EleID);
+					// store in cache (one entry per element id). Keep minimal data useful for memory and deduplication
+					let cacheKey = EleType + ':' + EleID;
+					let cacheValue = {
+						type: EleType,
+						lat: EleLat,
+						lon: EleLon,
+						text: EleText,
+						tags: {
+							lightSource: tagLightSource,
+							lightMethod: tagLightMethod,
+							lightColour: tagLightColour,
+							lightFlash: tagLightFlash,
+							lightDirection: tagLightDirection,
+							lightShape: tagLightShape,
+							lightHeight: tagLightHeight,
+							navigationaid: tagNavigationaid,
+							ref: tagRef
+						}
+					};
+					cacheAdd(cacheKey, cacheValue, !!isLatest);
 
 					i = i - 1;
 					j = j + 1;
@@ -622,7 +710,7 @@ function parseOSM(data)
 }
 
 
-function parseOSMlowZoom(data)
+function parseOSMlowZoom(data, isLatest)
 {
 	StreetLightsLowZoomLayer.setData({max: 8, data:[]});
 	//console.log(data);
@@ -633,6 +721,13 @@ function parseOSMlowZoom(data)
 	let iconSize = 8;
 	let LightsData = []
 	
+	if (data === false) {
+		// clear low zoom cache reference if requested
+		if (isLatest) {
+			g_latestCall.keys = new Set();
+		}
+		return;
+	}
 	$(data).find('node').each(function(){
 		let EleID = $(this).attr("id");
 		let EleCoordArray = new Array();
@@ -656,10 +751,14 @@ function parseOSMlowZoom(data)
 				iconAnchor:   [0, 0],
 				});
 			let marker = new L.Marker(markerLocation,{icon : markerIcon});
+			// we don't add marker to layer for low zoom here (heatmap uses the LightsData)
 			
+			// Cache the low-zoom element to avoid duplicate memory entries
+			let cacheKey = "node:" + EleID;
+			let cacheValue = { type: "node", lat: EleLat, lon: EleLon, count: 1 };
+			cacheAdd(cacheKey, cacheValue, !!isLatest);
 		}
-		
-		LightsData.push({"lat" : EleLat, "lng" : EleLon, "count" : 1});
+		LightsData.push({"lat" : EleLat, "lng" : EleLon, "count" : 1, "id": EleID});
 	});
 
 	//console.log(LightsData)
