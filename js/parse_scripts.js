@@ -571,27 +571,58 @@ function parseOSM(data, isLatest)
 			if($.inArray(EleID, MarkerArray) == -1) {
 				let lightDirectionArray = [], refArray = []
 				let createdMarkers = [];
+				let createdMarkerInfos = [];
 				let cacheKey = EleType + ':' + EleID;
 				// Try to reuse cached markers/shapes
 				if (g_cache.has(cacheKey)) {
 					const cached = g_cache.get(cacheKey);
 					cacheTouch(cacheKey);
-					// re-add cached markers
+					// re-add or refresh cached markers if available
+					console.debug && console.debug('cache hit:', cacheKey);
 					if (cached.markers && cached.markers.length) {
-						cached.markers.forEach(function(m) {
-							if (m.getPopup) {
-								if (EleText && m.getPopup()) {
-									m.getPopup().setContent(EleText);
-								} else if (EleText && !m.getPopup()) {
-									m.bindPopup(EleText);
-								}
+						// if we have per-marker infos, update icon/position per info
+						if (cached.markerInfos && cached.markerInfos.length && cached.markerInfos.length === cached.markers.length) {
+							for (let mi = 0; mi < cached.markers.length; mi++) {
+								const m = cached.markers[mi];
+								const info = cached.markerInfos[mi];
+								try {
+									if (m.setLatLng && info && info.lat && info.lon) m.setLatLng(new L.LatLng(info.lat, info.lon));
+									// recompute icon for current zoom/state
+									const Icon = getMarkerIcon(L, cached.tags.lightSource, cached.tags.lightMethod, cached.tags.lightColour, cached.tags.lightFlash, info.direction, cached.tags.lightShape, cached.tags.lightHeight, cached.tags.navigationaid, info.ref);
+									if (m.setIcon) m.setIcon(Icon);
+									if (EleText) {
+										if (m.getPopup && m.getPopup()) {
+											m.getPopup().setContent(EleText);
+										} else if (m.bindPopup) {
+											m.bindPopup(EleText);
+										}
+									}
+									if(cached.tags.lightSource == "aviation" || cached.tags.lightSource == "warning") {
+										AviationLayer.addLayer(m);
+									} else {
+										StreetLightsLayer.addLayer(m);
+									}
+								} catch(e) {}
 							}
-							if(tagLightSource == "aviation" || tagLightSource == "warning") {
-								AviationLayer.addLayer(m);
-							} else {
-								StreetLightsLayer.addLayer(m);
-							}
-						});
+						} else {
+							// no per-marker infos — fall back to re-adding existing markers and updating popup
+							cached.markers.forEach(function(m) {
+								try {
+									if (m.getPopup) {
+										if (EleText && m.getPopup()) {
+											m.getPopup().setContent(EleText);
+										} else if (EleText && !m.getPopup()) {
+											m.bindPopup(EleText);
+										}
+									}
+									if(cached.tags.lightSource == "aviation" || cached.tags.lightSource == "warning") {
+										AviationLayer.addLayer(m);
+									} else {
+										StreetLightsLayer.addLayer(m);
+									}
+								} catch(e) {}
+							});
+						}
 						// mark as part of latest if applicable
 						if (isLatest) {
 							if (!g_latestCall.keys) g_latestCall.keys = new Set();
@@ -675,11 +706,13 @@ function parseOSM(data, isLatest)
 
 					// record marker for caching/reuse
 					if (typeof createdMarkers !== 'undefined') createdMarkers.push(marker);
+					if (typeof createdMarkerInfos !== 'undefined') createdMarkerInfos.push({ lat: EleLatNew, lon: EleLonNew, direction: lightDirectionArray[j], ref: refArray[j] });
 
 					i = i - 1;
 					j = j + 1;
 				}
 				// finished creating markers for this element — record once and cache
+				console.debug && console.debug('cache add:', cacheKey2, 'markers:', createdMarkers.length);
 				MarkerArray.push(EleID);
 				let cacheKey2 = EleType + ':' + EleID;
 				let cacheValue2 = {
@@ -698,7 +731,8 @@ function parseOSM(data, isLatest)
 						navigationaid: tagNavigationaid,
 						ref: tagRef
 					},
-					markers: createdMarkers
+					markers: createdMarkers,
+					markerInfos: createdMarkerInfos
 				};
 				cacheAdd(cacheKey2, cacheValue2, !!isLatest);
 
@@ -832,10 +866,23 @@ function parseOSMlowZoom(data, isLatest)
 			let marker = new L.Marker(markerLocation,{icon : markerIcon});
 			// we don't add marker to layer for low zoom here (heatmap uses the LightsData)
 			
-			// Cache the low-zoom element to avoid duplicate memory entries
-			let cacheKey = "node:" + EleID;
-			let cacheValue = { type: "node", lat: EleLat, lon: EleLon, count: 1, markers: [], placeholder: true };
-			cacheAdd(cacheKey, cacheValue, !!isLatest);
+				// Cache the low-zoom element to avoid duplicate memory entries
+				let cacheKey = "node:" + EleID;
+				let cacheValue = { type: "node", lat: EleLat, lon: EleLon, count: 1, markers: [], placeholder: true };
+				// Do not overwrite an existing full (high-zoom) cache entry with a lightweight placeholder
+				if (g_cache.has(cacheKey)) {
+					const existing = g_cache.get(cacheKey);
+					if (!(existing && existing.markers && existing.markers.length)) {
+						cacheAdd(cacheKey, cacheValue, !!isLatest);
+					} else {
+						if (isLatest) {
+							if (!g_latestCall.keys) g_latestCall.keys = new Set();
+							g_latestCall.keys.add(cacheKey);
+						}
+					}
+				} else {
+					cacheAdd(cacheKey, cacheValue, !!isLatest);
+				}
 		}
 		LightsData.push({"lat" : EleLat, "lng" : EleLon, "count" : 1, "id": EleID});
 	});
