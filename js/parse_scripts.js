@@ -24,7 +24,7 @@ var g_loadedIDs = new Set();
 // In-memory cache for OSM elements: key = "type:id" (e.g. "node:123" or "way:456")
 // Uses Map + order array to implement a simple LRU with a cap.
 var g_cache = new Map();
-var g_cacheCap = 500;
+var g_cacheCap = 15000;
 // Keep track of the latest successful AJAX call (bbox string and keys)
 var g_latestCall = { bbox: "", keys: new Set() };
 // request counter to identify latest initiated request and avoid race conditions
