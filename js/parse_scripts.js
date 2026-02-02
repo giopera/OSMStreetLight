@@ -323,7 +323,7 @@ function loadData(bbox, north, west, south, east) {
 		RequestProtocol = "http://";
 	}
 
-	RequestURL = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestText;
+	RequestURL = RequestProtocol + "https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=" + XMLRequestText;
     
 	// mark this request as the latest initiated request and clear keys for it
 	g_requestCounter++;
