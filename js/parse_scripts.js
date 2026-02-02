@@ -69,6 +69,65 @@ function cacheAdd(key, value, isLatest) {
 	}
 }
 
+// Show cached markers/ways that fall into the given bbox immediately.
+// north, west, south, east are numeric coordinates.
+function showCachedForBBox(north, west, south, east) {
+	// clear visible layers first so we show only items for this bbox
+	StreetLightsLayer.clearLayers();
+	AviationLayer.clearLayers();
+	LitStreetsLayer.clearLayers();
+	UnLitStreetsLayer.clearLayers();
+
+	for (const [key, entry] of g_cache.entries()) {
+		try {
+			if (!entry) continue;
+			if (entry.type === 'node' && entry.lat && entry.lon && entry.markers && entry.markers.length) {
+				const lat = Number(entry.lat);
+				const lon = Number(entry.lon);
+				if (lat <= north && lat >= south && lon >= west && lon <= east) {
+					// re-add markers to appropriate layer
+					entry.markers.forEach(function(m) {
+						try {
+							if (entry.tags && (entry.tags.lightSource === 'aviation' || entry.tags.lightSource === 'warning')) {
+								AviationLayer.addLayer(m);
+							} else {
+								StreetLightsLayer.addLayer(m);
+							}
+						} catch(e) {}
+					});
+					// touch so it becomes recent and protect from trimming
+					cacheTouch(key);
+					if (!g_latestCall.keys) g_latestCall.keys = new Set();
+					g_latestCall.keys.add(key);
+				}
+			} else if (entry.type === 'way' && entry.shape) {
+				// for ways, check bounding box of coordinates if available via shape.getBounds
+				try {
+					const b = entry.shape.getBounds && entry.shape.getBounds();
+					if (b) {
+						const bNorth = b.getNorth();
+						const bSouth = b.getSouth();
+						const bWest = b.getWest();
+						const bEast = b.getEast();
+						// simple intersection test
+						if (!(bNorth < south || bSouth > north || bEast < west || bWest > east)) {
+							// add to correct layer depending on tag
+							if (entry.tags && entry.tags.lit && entry.tags.lit != 'no') {
+								LitStreetsLayer.addLayer(entry.shape);
+							} else {
+								UnLitStreetsLayer.addLayer(entry.shape);
+							}
+							cacheTouch(key);
+							if (!g_latestCall.keys) g_latestCall.keys = new Set();
+							g_latestCall.keys.add(key);
+						}
+					}
+				} catch(e) {}
+			}
+		} catch(e) {}
+	}
+}
+
 function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high zoom layer added, 2: low zoom layer added, 3: layer removed, 4: streetlights layer removed, 5: language updated
 	
 	let hasHighZoomLayer = false, hasLowZoomLayer = false, zoomWarning = 1;
@@ -118,7 +177,7 @@ function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high 
 	}
 	// load data if map moved or layer added
 	if (hasHighZoomLayer && (action == 0 || action == 1)) {
-		loadData('[bbox:' + lat2 + ',' + lon1 + ',' + lat1 + ',' + lon2 +  '];');
+		loadData('[bbox:' + lat2 + ',' + lon1 + ',' + lat1 + ',' + lon2 +  '];', lat1, lon1, lat2, lon2);
 	}
 	if (hasLowZoomLayer && (action == 0 || action == 2 || action == 4)) {
 		loadDataLowZoom('[bbox:' + lat2 + ',' + lon1 + ',' + lat1 + ',' + lon2 + '];');
@@ -206,7 +265,7 @@ function clearLowZoomData() {
 	map.removeLayer(StreetLightsLowZoomLayer)
 }
 
-function loadData(bbox) {
+function loadData(bbox, north, west, south, east) {
 	$( "#loading_text" ).text("")
 	$( "#loading" ).attr("class", "");
 	$( "#loading_icon" ).attr("class", "loading_spinner")
@@ -246,6 +305,11 @@ function loadData(bbox) {
 	g_latestCall.requestId = thisRequestId;
 	g_latestCall.bbox = XMLRequestText;
 	g_latestCall.keys = new Set();
+
+	// show cached items for this bbox immediately (and protect their keys)
+	if (typeof north !== 'undefined') {
+		try { showCachedForBBox(north, west, south, east); } catch(e) {}
+	}
 
 	//AJAX REQUEST
 	$.ajax({
