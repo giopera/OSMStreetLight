@@ -15,6 +15,10 @@ var g_cacheCap = 500;
 var g_latestCall = { bbox: "", keys: new Set() };
 // request counter to identify latest initiated request and avoid race conditions
 var g_requestCounter = 0;
+// current pending AJAX request (so we can abort it when starting a new one)
+var g_currentAjax = null;
+// Safety limit to avoid parsing extremely large responses that can freeze the browser
+var MAX_PARSE_ELEMENTS = 20000;
 
 function cacheTouch(key) {
 	// Move key to most-recent position using Map ordering: delete+set
@@ -88,6 +92,8 @@ function showCachedForBBox(north, west, south, east) {
 					// re-add markers to appropriate layer
 					entry.markers.forEach(function(m) {
 						try {
+							if (!m) return;
+							if (m._map) return; // already on a map
 							if (entry.tags && (entry.tags.lightSource === 'aviation' || entry.tags.lightSource === 'warning')) {
 								AviationLayer.addLayer(m);
 							} else {
@@ -310,13 +316,56 @@ function loadData(bbox, north, west, south, east) {
 	if (typeof north !== 'undefined') {
 		try { showCachedForBBox(north, west, south, east); } catch(e) {}
 	}
-
-	//AJAX REQUEST
-	$.ajax({
+	// Abort any previous request still running to avoid piling up work
+	try {
+		if (g_currentAjax && g_currentAjax.readyState !== 4) {
+			g_currentAjax.abort();
+		}
+	} catch(e) {}
+	//AJAX REQUEST (store handle so we can abort if needed)
+	g_currentAjax = $.ajax({
 		url: RequestURL,
 		type: 'GET',
 		crossDomain: true,
-		success: function(data) {
+		success: function(data, textStatus, jqXHR) {
+			// clear current handle
+			g_currentAjax = null;
+			// basic validation: ensure we received an OSM XML doc or at least something containing <osm
+			let isXmlDoc = false;
+			try {
+				isXmlDoc = (typeof data === 'object' && data !== null && data.documentElement && (data.documentElement.nodeName === 'osm' || data.documentElement.nodeName.toLowerCase && data.documentElement.nodeName.toLowerCase() === 'osm'));
+			} catch(e) { isXmlDoc = false; }
+			if (!isXmlDoc) {
+				// sometimes servers return HTML error pages (or plain text). bail out safely.
+				if (typeof data === 'string' && data.indexOf('<osm') === -1) {
+					console.error('Overpass response not valid OSM XML - skipping parse');
+					if (loadingcounter==1) {
+						$( "#loading_text" ).html("")
+						$( "#loading" ).attr("class", "error");
+						$( "#loading_icon" ).attr("class", "loading_error")
+					}
+					loadingcounter = Math.max(0, loadingcounter - 1);
+					return;
+				}
+			}
+			// If we have XML, protect against extremely large responses
+			if (isXmlDoc) {
+				try {
+					const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+					const wayCount = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
+					const total = nodeCount + wayCount;
+					if (total > MAX_PARSE_ELEMENTS) {
+						console.error('Overpass response too large (elements=' + total + '), skipping parse to avoid freeze');
+						if (loadingcounter==1) {
+							$( "#loading_text" ).html("")
+							$( "#loading" ).attr("class", "error");
+							$( "#loading_icon" ).attr("class", "loading_error")
+						}
+						loadingcounter = Math.max(0, loadingcounter - 1);
+						return;
+					}
+				} catch(e) {}
+			}
 			// only treat this response as "latest" if its id matches the most recently initiated request
 			const isLatest = (thisRequestId === g_latestCall.requestId);
 			if (loadingcounter==1) {
@@ -324,13 +373,20 @@ function loadData(bbox, north, west, south, east) {
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
-			loadingcounter--;
+			loadingcounter = Math.max(0, loadingcounter - 1);
 			parseOSM(data, isLatest);
 		},
 		error: function(jqXHR, textStatus, errorThrown){
+			// clear current handle
+			g_currentAjax = null;
+			// if aborted intentionally, don't spam UI
+			if (textStatus === 'abort') {
+				loadingcounter = Math.max(0, loadingcounter - 1);
+				return;
+			}
 			
 			if( i18next.isInitialized) {
-				if (textStatus == "timeout" || textStatus == "error" || textStatus == "abort" || textStatus == "parseerror") {
+				if (textStatus == "timeout" || textStatus == "error" || textStatus == "parseerror") {
 					textStatus_value = i18next.t("ajaxerror_" + textStatus);
 				} else {
 					textStatus_value = i18next.t("ajaxerror_unknown");
@@ -342,7 +398,7 @@ function loadData(bbox, north, west, south, east) {
 			$( "#loading" ).attr("class", "error");
 			$( "#loading_icon" ).attr("class", "loading_error")
 			$( "#loading_text" ).html("&nbsp;" + textStatus_value)
-			loadingcounter--;
+			loadingcounter = Math.max(0, loadingcounter - 1);
 		},
 		timeout: 10000 // timeout after 10s
 	});
@@ -372,39 +428,75 @@ function loadDataLowZoom(bbox)
 	g_latestCall.requestId = thisLowRequestId;
 	g_latestCall.bbox = XMLRequestTextLowZoom;
 	g_latestCall.keys = new Set();
-
-	//AJAX REQUEST
-	$.ajax({
+	// Abort any previous request still running to avoid piling up work
+	try {
+		if (g_currentAjax && g_currentAjax.readyState !== 4) {
+			g_currentAjax.abort();
+		}
+	} catch(e) {}
+	//AJAX REQUEST (store handle so we can abort if needed)
+	g_currentAjax = $.ajax({
 		url: RequestURLlowZoom,
 		type: 'GET',
 		crossDomain: true,
-		success: function(data){
+		success: function(data, textStatus, jqXHR){
+			g_currentAjax = null;
+			// validate response similarly to high-zoom
+			let isXmlDoc = false;
+			try { isXmlDoc = (typeof data === 'object' && data !== null && data.documentElement && (data.documentElement.nodeName === 'osm' || (data.documentElement.nodeName.toLowerCase && data.documentElement.nodeName.toLowerCase() === 'osm'))); } catch(e) { isXmlDoc = false; }
+			if (!isXmlDoc) {
+				if (typeof data === 'string' && data.indexOf('<osm') === -1) {
+					console.error('Overpass low-zoom response not valid OSM XML - skipping parse');
+					if (loadingcounter==1) {
+						$( "#loading_text" ).html("")
+						$( "#loading" ).attr("class", "error");
+						$( "#loading_icon" ).attr("class", "loading_error")
+					}
+					loadingcounter = Math.max(0, loadingcounter - 1);
+					return;
+				}
+			}
+			// element size guard
+			if (isXmlDoc) {
+				try {
+					const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+					if (nodeCount > MAX_PARSE_ELEMENTS) {
+						console.error('Overpass low-zoom response too large (nodes=' + nodeCount + '), skipping parse');
+						if (loadingcounter==1) {
+							$( "#loading_text" ).html("")
+							$( "#loading" ).attr("class", "error");
+							$( "#loading_icon" ).attr("class", "loading_error")
+						}
+						loadingcounter = Math.max(0, loadingcounter - 1);
+						return;
+					}
+				} catch(e) {}
+			}
 			const isLatest = (thisLowRequestId === g_latestCall.requestId);
 			if (loadingcounter==1) {
 				$( "#loading_text" ).html("")
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
-			loadingcounter--;
+			loadingcounter = Math.max(0, loadingcounter - 1);
 			parseOSMlowZoom(data, isLatest);
 		},
 		error: function(jqXHR, textStatus, errorThrown) {
-			
+			g_currentAjax = null;
+			if (textStatus === 'abort') { loadingcounter = Math.max(0, loadingcounter - 1); return; }
 			if (i18next.isInitialized) {
-					
-				if (textStatus == "timeout" || textStatus == "error" || textStatus == "abort" || textStatus == "parseerror") {
+				if (textStatus == "timeout" || textStatus == "error" || textStatus == "parseerror") {
 					textStatus_value = i18next.t("ajaxerror_" + textStatus);
 				} else {
 					textStatus_value = i18next.t("ajaxerror_unknown");
 				}
-			} else { // fallback in case i18next is not initalized yet.
+			} else {
 				textStatus_value = "Error while loading data";
 			}
-			
 			$( "#loading" ).attr("class", "error");
 			$( "#loading_icon" ).attr("class", "loading_error")
 			$( "#loading_text" ).html("&nbsp;" + textStatus_value)
-			loadingcounter--;
+			loadingcounter = Math.max(0, loadingcounter - 1);
 		},
 		timeout: 10000 // timeout after 10s
 	});
@@ -419,6 +511,27 @@ function parseOSM(data, isLatest)
 	AviationLayer.clearLayers();
 	LitStreetsLayer.clearLayers();
 	UnLitStreetsLayer.clearLayers();
+
+	// Defensive guard: if data is present but not an OSM XML document, skip heavy parsing
+	if (data && typeof data === 'object' && data.documentElement && data.documentElement.nodeName && data.documentElement.nodeName.toLowerCase() !== 'osm') {
+		console.error('parseOSM: invalid XML document, skipping parse');
+		if (isLatest) {
+			g_latestCall.keys = new Set();
+		}
+		return;
+	}
+	// If XML, guard against extremely large responses
+	if (data && typeof data === 'object' && data.getElementsByTagName) {
+		try {
+			const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+			const wayCount = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
+			if ((nodeCount + wayCount) > MAX_PARSE_ELEMENTS) {
+				console.error('parseOSM: response too large (elements=' + (nodeCount + wayCount) + '), skipping parse');
+				if (isLatest) g_latestCall.keys = new Set();
+				return;
+			}
+		} catch(e) {}
+	}
 
 	if (data === false) {
 		// when asked to remove data we also clear latestCall keys
@@ -904,6 +1017,23 @@ function parseOSMlowZoom(data, isLatest)
 			g_latestCall.keys = new Set();
 		}
 		return;
+	}
+
+	// Defensive guard: skip if response is not XML or excessively large
+	if (data && typeof data === 'object' && data.documentElement && data.documentElement.nodeName && data.documentElement.nodeName.toLowerCase() !== 'osm') {
+		console.error('parseOSMlowZoom: invalid XML document, skipping parse');
+		if (isLatest) g_latestCall.keys = new Set();
+		return;
+	}
+	if (data && typeof data === 'object' && data.getElementsByTagName) {
+		try {
+			const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+			if (nodeCount > MAX_PARSE_ELEMENTS) {
+				console.error('parseOSMlowZoom: response too large (nodes=' + nodeCount + '), skipping parse');
+				if (isLatest) g_latestCall.keys = new Set();
+				return;
+			}
+		} catch(e) {}
 	}
 	$(data).find('node').each(function(){
 		let EleID = $(this).attr("id");
