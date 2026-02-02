@@ -712,7 +712,6 @@ function parseOSM(data, isLatest)
 					j = j + 1;
 				}
 				// finished creating markers for this element — record once and cache
-				console.debug && console.debug('cache add:', cacheKey2, 'markers:', createdMarkers.length);
 				MarkerArray.push(EleID);
 				let cacheKey2 = EleType + ':' + EleID;
 				let cacheValue2 = {
@@ -735,6 +734,7 @@ function parseOSM(data, isLatest)
 					markerInfos: createdMarkerInfos
 				};
 				cacheAdd(cacheKey2, cacheValue2, !!isLatest);
+				console.debug && console.debug('cache add:', cacheKey2, 'markers:', createdMarkers.length);
 
 			}
 
