@@ -12,3 +12,12 @@ const MIN_ZOOM_LOW_ZOOM = 11;
 const OPACITY_NO_DATA = 1.0;
 const OPACITY_HAS_DATA = 0.2;
 const TIMEOUT = 3600;
+
+// Per-base-layer default opacities when data present / absent.
+// Use the layer variables' keys from index.html (e.g. 'OSM_carto').
+const LAYER_OPACITY_DEFAULTS = {
+	OSM_carto: { hasData: 0.2, noData: 1.0 },
+	OSM_hot: { hasData: 0.2, noData: 1.0 },
+	OSM_carto_dark: { hasData: 1.0, noData: 1.0 },
+	OpenTopoMap: { hasData: 0.2, noData: 1.0 }
+};

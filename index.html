@@ -97,28 +97,32 @@
 			var OverpassAttrib = 'Data via <a href="https://www.overpass-api.de/">Overpass API</a>';
 			
 			var OSM_carto = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-				maxZoom: 19,
+				maxZoom: 20,
 				attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | ' + OverpassAttrib
 			});
-			var OSM_de = L.tileLayer('https://{s}.tile.openstreetmap.de/tiles/osmde/{z}/{x}/{y}.png', {
-				maxZoom: 18,
+			OSM_carto._layerName = 'OSM_carto';
+			var OSM_hot = L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+				maxZoom: 20,
 				attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ' + OverpassAttrib
 			});			
-			var OSM_fr = L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+			OSM_hot._layerName = 'OSM_hot';
+			var OSM_carto_dark = L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}.png', {
 				maxZoom: 20,
-				attribution: '&copy; OpenStreetMap France | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ' + OverpassAttrib
+				attribution: '&copy; Map tiles by Carto, under CC BY 3.0. | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | ' + OverpassAttrib
 			});			
+			OSM_carto_dark._layerName = 'OSM_carto_dark';
 			var OpenTopoMap = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
 				maxZoom: 17,
 				attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="https://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>) | ' + OverpassAttrib
 			});
+			OpenTopoMap._layerName = 'OpenTopoMap';
 
 			var map = new L.Map('map');
 
 			var baseMaps = {
 				"OpenStreetMap Carto": OSM_carto,
-				"OpenStreetMap DE": OSM_de,
-				"OpenStreetMap FR": OSM_fr,
+				"OpenStreetMap HOT": OSM_hot,
+				"OpenStreetMap Carto Dark": OSM_carto_dark,
 				"OpenTopoMap": OpenTopoMap
 			};
 
@@ -218,7 +222,13 @@
 
 			map.on('baselayerchange', function (e) {
 				current_layer = e.layer;
-				opacitySlider.setOpacityLayer(current_layer);		
+				opacitySlider.setOpacityLayer(current_layer);
+				// Set the base layer opacity according to whether data are shown
+				try {
+					var op = (typeof getLayerOpacity === 'function') ? getLayerOpacity(current_layer, g_showData) : (g_showData ? OPACITY_HAS_DATA : OPACITY_NO_DATA);
+					if (current_layer && typeof current_layer.setOpacity === 'function') current_layer.setOpacity(op);
+					$("#opacity_slider").slider("option", "value", op * 100);
+				} catch (err) {}
 			});
 			
 		</script>

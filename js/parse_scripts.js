@@ -5,6 +5,20 @@ function MoveCall(action) { //action: 0: map moved, 1: high zoom layer added, 2:
 	loadXML(lefttop.lat,lefttop.lng,rightbottom.lat,rightbottom.lng, action);
 }
 
+// Return per-layer opacity based on whether data are shown.
+function getLayerOpacity(layer, hasData) {
+	try {
+		if (!layer) return hasData ? OPACITY_HAS_DATA : OPACITY_NO_DATA;
+		const name = layer._layerName || (layer.options && layer.options._layerName);
+		if (name && window && window.L) {
+			if (typeof LAYER_OPACITY_DEFAULTS !== 'undefined' && LAYER_OPACITY_DEFAULTS[name]) {
+				return hasData ? LAYER_OPACITY_DEFAULTS[name].hasData : LAYER_OPACITY_DEFAULTS[name].noData;
+			}
+		}
+	} catch (e) {}
+	return hasData ? OPACITY_HAS_DATA : OPACITY_NO_DATA;
+}
+
 var g_loadedIDs = new Set();
 
 // In-memory cache for OSM elements: key = "type:id" (e.g. "node:123" or "way:456")
@@ -221,9 +235,10 @@ function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high 
 		// reset loading counter
 		loadingcounter = 0;		
 		g_showData = false;
-		//update opacity
-		current_layer.setOpacity(g_opacityNoData);
-		$("#opacity_slider").slider("option", "value", g_opacityNoData * 100);	
+		// update opacity using per-layer defaults when available
+		const opNoData = (typeof getLayerOpacity === 'function') ? getLayerOpacity(current_layer, false) : g_opacityNoData;
+		current_layer.setOpacity(opNoData);
+		$("#opacity_slider").slider("option", "value", opNoData * 100);    
 	}
 	
 	//handle zoom warning
@@ -263,8 +278,9 @@ function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high 
 	} else {
 		g_showData = true;
 		$( "#zoomwarning_cont" ).fadeOut(500);
-		current_layer.setOpacity(g_opacityHasData);
-		$("#opacity_slider").slider("option", "value", g_opacityHasData * 100);
+		const opHasData = (typeof getLayerOpacity === 'function') ? getLayerOpacity(current_layer, true) : g_opacityHasData;
+		current_layer.setOpacity(opHasData);
+		$("#opacity_slider").slider("option", "value", opHasData * 100);
 	}
 	
 }
@@ -281,8 +297,9 @@ function loadLowZoomDataOnce() {
 	loadDataLowZoom('[bbox:' + lat2 + ',' + lon1 + ',' + lat1 + ',' + lon2 + '];');
 	
 	$( "#zoomwarning_cont" ).fadeOut(500);
-	current_layer.setOpacity(g_opacityHasData);
-	$("#opacity_slider").slider("option", "value", g_opacityHasData * 100);
+	const opHasData2 = (typeof getLayerOpacity === 'function') ? getLayerOpacity(current_layer, true) : g_opacityHasData;
+	current_layer.setOpacity(opHasData2);
+	$("#opacity_slider").slider("option", "value", opHasData2 * 100);
 }	
 
 function clearLowZoomData() {
