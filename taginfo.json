@@ -1,13 +1,13 @@
    {
        "data_format": 1,
-       "data_url": "https://raw.githubusercontent.com/sb12/OSMStreetLight/master/taginfo.json",
+       "data_url": "https://raw.githubusercontent.com/giopera/OSMStreetLight/master/taginfo.json",
        "project": {
            "name": "Street Lights in OpenStreetMap",
            "description": "Show street lights and their attributes",
            "project_url": "https://sb12.github.io/OSMStreetLight",
-           "doc_url": "https://sb12.github.io/OSMStreetLight/about.html",
-           "contact_name": "mapper999",
-           "contact_email": "osm.mapper999@gmail.com"
+           "doc_url": "https://lights.giope.re/about.html",
+           "contact_name": "giopera",
+           "contact_email": "giopera@linux.it"
        },
        "tags": [
 		  {
