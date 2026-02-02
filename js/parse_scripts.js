@@ -300,7 +300,7 @@ function loadData(bbox, north, west, south, east) {
 
 	//CrossoverAPI XML request
 	// Street Light query
-	XMLRequestText = bbox + '( node["highway"="street_lamp"]; node["light_source"]; node["tower:type"="lighting"]; node["aeroway"="navigationaid"];'
+	XMLRequestText = "[timeout: " + TIMEOUT + "]" + bbox + '( node["highway"="street_lamp"]; node["light_source"]; node["tower:type"="lighting"]; node["aeroway"="navigationaid"];'
 
 	today = new Date();
 	if (today.getMonth() == 11) { // show christmas trees only in December
@@ -447,7 +447,7 @@ function loadDataLowZoom(bbox)
 		RequestProtocol = "http://";
 	}
 
-	XMLRequestTextLowZoom = bbox + '( node["highway"="street_lamp"]; node["light_source"];); out skel;'
+	XMLRequestTextLowZoom = "[timeout: " + TIMEOUT + "]" + bbox + '( node["highway"="street_lamp"]; node["light_source"];); out skel;'
 	RequestURLlowZoom = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestTextLowZoom;
     
 	// mark this low-zoom request as latest and clear keys

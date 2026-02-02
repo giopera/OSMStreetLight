@@ -11,3 +11,4 @@ const MIN_ZOOM_LOW_ZOOM = 11;
 // set default opacity levels;
 const OPACITY_NO_DATA = 1.0;
 const OPACITY_HAS_DATA = 0.2;
+const TIMEOUT = 3600;
