@@ -20,8 +20,8 @@ var g_currentAjax = null;
 // Safety limit to avoid parsing extremely large responses that can freeze the browser
 var MAX_PARSE_ELEMENTS = 20000;
 
-// Diagnostic logger to locate blocking stages. Disabled by default now.
-var g_diagEnabled = false;
+// Diagnostic logger to locate blocking stages. Enable temporarily while debugging.
+var g_diagEnabled = true;
 var g_diag = [];
 function diag(tag, info) {
 	if (!g_diagEnabled) return;
@@ -323,7 +323,7 @@ function loadData(bbox, north, west, south, east) {
 		RequestProtocol = "http://";
 	}
 
-	RequestURL = RequestProtocol + "maps.mail.ru/osm/tools/overpass/api/interpreter?data=" + XMLRequestText;
+	RequestURL = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestText;
     
 	// mark this request as the latest initiated request and clear keys for it
 	g_requestCounter++;
