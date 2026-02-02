@@ -10,45 +10,57 @@ var g_loadedIDs = new Set();
 // In-memory cache for OSM elements: key = "type:id" (e.g. "node:123" or "way:456")
 // Uses Map + order array to implement a simple LRU with a cap.
 var g_cache = new Map();
-var g_cacheOrder = [];
 var g_cacheCap = 500;
 // Keep track of the latest successful AJAX call (bbox string and keys)
 var g_latestCall = { bbox: "", keys: new Set() };
+// request counter to identify latest initiated request and avoid race conditions
+var g_requestCounter = 0;
 
 function cacheTouch(key) {
-	// move key to most-recent position
-	const idx = g_cacheOrder.indexOf(key);
-	if (idx !== -1) {
-		g_cacheOrder.splice(idx, 1);
-		g_cacheOrder.push(key);
-	}
+	// Move key to most-recent position using Map ordering: delete+set
+	if (!g_cache.has(key)) return;
+	const val = g_cache.get(key);
+	g_cache.delete(key);
+	g_cache.set(key, val);
 }
 
 function trimCache() {
 	// Trim oldest entries until at or below cap, but never remove entries referenced by latestCall
 	while (g_cache.size > g_cacheCap) {
-		if (g_cacheOrder.length === 0) break;
-		const oldest = g_cacheOrder.shift();
+		const it = g_cache.keys();
+		const oldest = it.next().value;
+		if (!oldest) break;
 		if (g_latestCall.keys && g_latestCall.keys.has(oldest)) {
-			// keep it: move to end and continue
-			g_cacheOrder.push(oldest);
-			// if everything is in latestCall, break to avoid infinite loop
-			const removable = g_cacheOrder.find(k => !g_latestCall.keys.has(k));
+			// move it to end to keep it for now
+			cacheTouch(oldest);
+			// if everything is in latestCall, stop trimming
+			const removable = Array.from(g_cache.keys()).find(k => !(g_latestCall.keys && g_latestCall.keys.has(k)));
 			if (!removable) break;
 			continue;
 		}
+		// try to remove any leaflet objects before deleting to free map references
+		try {
+			const val = g_cache.get(oldest);
+			if (val) {
+				if (val.markers && val.markers.length) {
+					val.markers.forEach(function(m) { try { if (m.remove) m.remove(); } catch(e){} });
+				}
+				if (val.shape && val.shape.remove) {
+					try { val.shape.remove(); } catch(e){}
+				}
+			}
+		} catch(e) {}
 		g_cache.delete(oldest);
 	}
 }
 
 function cacheAdd(key, value, isLatest) {
 	if (g_cache.has(key)) {
-		// update stored value and touch
+		// update stored value and touch (move to end)
+		g_cache.delete(key);
 		g_cache.set(key, value);
-		cacheTouch(key);
 	} else {
 		g_cache.set(key, value);
-		g_cacheOrder.push(key);
 		trimCache();
 	}
 	if (isLatest) {
@@ -114,10 +126,10 @@ function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high 
 	
 	//remove data:
 	if (!hasHighZoomLayer) {
-		parseOSM(false);
+		parseOSM(false, false);
 	}
 	if(!hasLowZoomLayer && zoomWarning!=4) {
-		parseOSMlowZoom(false);
+		parseOSMlowZoom(false, false);
 		g_showStreetLightsLowZoomOnce = false;
 	}
 	if(!hasHighZoomLayer && !hasLowZoomLayer && zoomWarning!=4) {
@@ -227,24 +239,29 @@ function loadData(bbox) {
 	}
 
 	RequestURL = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestText;
-	
+    
+	// mark this request as the latest initiated request and clear keys for it
+	g_requestCounter++;
+	const thisRequestId = g_requestCounter;
+	g_latestCall.requestId = thisRequestId;
+	g_latestCall.bbox = XMLRequestText;
+	g_latestCall.keys = new Set();
+
 	//AJAX REQUEST
 	$.ajax({
 		url: RequestURL,
 		type: 'GET',
 		crossDomain: true,
 		success: function(data) {
-			// mark this as latest call (store the request text for reference) and clear keys
-			g_latestCall.bbox = XMLRequestText;
-			g_latestCall.keys = new Set();
-			// parse and mark as latest
+			// only treat this response as "latest" if its id matches the most recently initiated request
+			const isLatest = (thisRequestId === g_latestCall.requestId);
 			if (loadingcounter==1) {
 				$( "#loading_text" ).html("")
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
 			loadingcounter--;
-			parseOSM(data, true);
+			parseOSM(data, isLatest);
 		},
 		error: function(jqXHR, textStatus, errorThrown){
 			
@@ -284,24 +301,28 @@ function loadDataLowZoom(bbox)
 
 	XMLRequestTextLowZoom = bbox + '( node["highway"="street_lamp"]; node["light_source"];); out skel;'
 	RequestURLlowZoom = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestTextLowZoom;
-	
+    
+	// mark this low-zoom request as latest and clear keys
+	g_requestCounter++;
+	const thisLowRequestId = g_requestCounter;
+	g_latestCall.requestId = thisLowRequestId;
+	g_latestCall.bbox = XMLRequestTextLowZoom;
+	g_latestCall.keys = new Set();
+
 	//AJAX REQUEST
 	$.ajax({
 		url: RequestURLlowZoom,
 		type: 'GET',
 		crossDomain: true,
 		success: function(data){
-				// mark this as latest lowzoom call and clear keys
-				g_latestCall.bbox = XMLRequestTextLowZoom;
-				g_latestCall.keys = new Set();
-				// parse and mark as latest
+			const isLatest = (thisLowRequestId === g_latestCall.requestId);
 			if (loadingcounter==1) {
 				$( "#loading_text" ).html("")
 				$( "#loading" ).attr("class", "success");
 				$( "#loading_icon" ).attr("class", "loading_success")
 			}
 			loadingcounter--;
-				parseOSMlowZoom(data, true);
+			parseOSMlowZoom(data, isLatest);
 		},
 		error: function(jqXHR, textStatus, errorThrown) {
 			
@@ -549,6 +570,38 @@ function parseOSM(data, isLatest)
 
 			if($.inArray(EleID, MarkerArray) == -1) {
 				let lightDirectionArray = [], refArray = []
+				let createdMarkers = [];
+				let cacheKey = EleType + ':' + EleID;
+				// Try to reuse cached markers/shapes
+				if (g_cache.has(cacheKey)) {
+					const cached = g_cache.get(cacheKey);
+					cacheTouch(cacheKey);
+					// re-add cached markers
+					if (cached.markers && cached.markers.length) {
+						cached.markers.forEach(function(m) {
+							if (m.getPopup) {
+								if (EleText && m.getPopup()) {
+									m.getPopup().setContent(EleText);
+								} else if (EleText && !m.getPopup()) {
+									m.bindPopup(EleText);
+								}
+							}
+							if(tagLightSource == "aviation" || tagLightSource == "warning") {
+								AviationLayer.addLayer(m);
+							} else {
+								StreetLightsLayer.addLayer(m);
+							}
+						});
+						// mark as part of latest if applicable
+						if (isLatest) {
+							if (!g_latestCall.keys) g_latestCall.keys = new Set();
+							g_latestCall.keys.add(cacheKey);
+						}
+						MarkerArray.push(EleID);
+						// skip creating new markers
+						return;
+					}
+				}
 				if (tagLightDirection) {
 					lightDirectionArray = tagLightDirection.split(";");
 				}
@@ -620,48 +673,62 @@ function parseOSM(data, isLatest)
 						StreetLightsLayer.addLayer(marker);
 					}
 
-					MarkerArray.push(EleID);
-					// store in cache (one entry per element id). Keep minimal data useful for memory and deduplication
-					let cacheKey = EleType + ':' + EleID;
-					let cacheValue = {
-						type: EleType,
-						lat: EleLat,
-						lon: EleLon,
-						text: EleText,
-						tags: {
-							lightSource: tagLightSource,
-							lightMethod: tagLightMethod,
-							lightColour: tagLightColour,
-							lightFlash: tagLightFlash,
-							lightDirection: tagLightDirection,
-							lightShape: tagLightShape,
-							lightHeight: tagLightHeight,
-							navigationaid: tagNavigationaid,
-							ref: tagRef
-						}
-					};
-					cacheAdd(cacheKey, cacheValue, !!isLatest);
+					// record marker for caching/reuse
+					if (typeof createdMarkers !== 'undefined') createdMarkers.push(marker);
 
 					i = i - 1;
 					j = j + 1;
 				}
+				// finished creating markers for this element — record once and cache
+				MarkerArray.push(EleID);
+				let cacheKey2 = EleType + ':' + EleID;
+				let cacheValue2 = {
+					type: EleType,
+					lat: EleLat,
+					lon: EleLon,
+					text: EleText,
+					tags: {
+						lightSource: tagLightSource,
+						lightMethod: tagLightMethod,
+						lightColour: tagLightColour,
+						lightFlash: tagLightFlash,
+						lightDirection: tagLightDirection,
+						lightShape: tagLightShape,
+						lightHeight: tagLightHeight,
+						navigationaid: tagNavigationaid,
+						ref: tagRef
+					},
+					markers: createdMarkers
+				};
+				cacheAdd(cacheKey2, cacheValue2, !!isLatest);
 
 			}
 
 		} else if (tagLit == "no" || tagLit == "disused") {
 			// Draw ways, which have no popup
-			if(tagArea) {
-				let shape = L.polygon(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
-					stroke: false, fillColor: '#000000', fillOpacity: 0.4,
-					weight: 3
-				})
-				UnLitStreetsLayer.addLayer(shape);
+			let cacheKeyWay = "way:" + EleID;
+			if (g_cache.has(cacheKeyWay)) {
+				const cachedWay = g_cache.get(cacheKeyWay);
+				cacheTouch(cacheKeyWay);
+				if (cachedWay.shape) {
+					UnLitStreetsLayer.addLayer(cachedWay.shape);
+				}
 			} else {
-				let line = L.polyline(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
-					color: '#111111',
-					weight: 3
-				})
-				UnLitStreetsLayer.addLayer(line)
+				if(tagArea) {
+					let shape = L.polygon(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
+						stroke: false, fillColor: '#000000', fillOpacity: 0.4,
+						weight: 3
+					})
+					UnLitStreetsLayer.addLayer(shape);
+					cacheAdd(cacheKeyWay, { type: 'way', shape: shape, tags: { lit: tagLit, area: tagArea } }, !!isLatest);
+				} else {
+					let line = L.polyline(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
+						color: '#111111',
+						weight: 3
+					})
+					UnLitStreetsLayer.addLayer(line)
+					cacheAdd(cacheKeyWay, { type: 'way', shape: line, tags: { lit: tagLit } }, !!isLatest);
+				}
 			}
 		} else if (tagLit == "yes" || tagLit == "24/7" || tagLit == "automatic" || tagLit == "limited" || tagLit == "sunset-sunrise" || tagLit == "dusk-dawn" || tagLit == "interval") {
 			// Draw ways, which have no popup
@@ -675,28 +742,40 @@ function parseOSM(data, isLatest)
 				strokeDashArray = "0";
 				strokeColor = "#BBBBBB";
 			}
-			if (tagArea) {
-				let shape = L.polygon(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
-					stroke: false, fillColor: strokeColor, fillOpacity: 0.4,
-					weight: 3,
-					dashArray: strokeDashArray
-				})
-				LitStreetsLayer.addLayer(shape);
+			let cacheKeyWay2 = "way:" + EleID;
+			if (g_cache.has(cacheKeyWay2)) {
+				const cachedWay2 = g_cache.get(cacheKeyWay2);
+				cacheTouch(cacheKeyWay2);
+				if (cachedWay2.shape) {
+					LitStreetsLayer.addLayer(cachedWay2.shape);
+				}
 			} else {
-				let line = L.polyline(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
-					color: strokeColor,
-					weight: 3,
-					dashArray: strokeDashArray
-				})
-				LitStreetsLayer.addLayer(line)
-				
-				if (tagLit == "24/7") { // dotted outline for 24/7
+				if (tagArea) {
+					let shape = L.polygon(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
+						stroke: false, fillColor: strokeColor, fillOpacity: 0.4,
+						weight: 3,
+						dashArray: strokeDashArray
+					})
+					LitStreetsLayer.addLayer(shape);
+					cacheAdd(cacheKeyWay2, { type: 'way', shape: shape, tags: { lit: tagLit, area: tagArea } }, !!isLatest);
+				} else {
 					let line = L.polyline(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
 						color: strokeColor,
-						weight: 5,
-						dashArray: "1 6"
+						weight: 3,
+						dashArray: strokeDashArray
 					})
 					LitStreetsLayer.addLayer(line)
+					cacheAdd(cacheKeyWay2, { type: 'way', shape: line, tags: { lit: tagLit } }, !!isLatest);
+					
+					if (tagLit == "24/7") { // dotted outline for 24/7
+						let line2 = L.polyline(EleCoordArray.map(p => new L.LatLng(p[0], p[1])), {
+							color: strokeColor,
+							weight: 5,
+							dashArray: "1 6"
+						})
+						LitStreetsLayer.addLayer(line2)
+						// optionally cache the thicker outline too (skip to save mem)
+					}
 				}
 			}
 		}
@@ -755,7 +834,7 @@ function parseOSMlowZoom(data, isLatest)
 			
 			// Cache the low-zoom element to avoid duplicate memory entries
 			let cacheKey = "node:" + EleID;
-			let cacheValue = { type: "node", lat: EleLat, lon: EleLon, count: 1 };
+			let cacheValue = { type: "node", lat: EleLat, lon: EleLon, count: 1, markers: [], placeholder: true };
 			cacheAdd(cacheKey, cacheValue, !!isLatest);
 		}
 		LightsData.push({"lat" : EleLat, "lng" : EleLon, "count" : 1, "id": EleID});
