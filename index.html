@@ -35,7 +35,8 @@
 		<script src="leaflet/plugins/heatmap.js/build/heatmap.js"></script>
 		<script src="leaflet/plugins/heatmap.js/plugins/leaflet-heatmap/leaflet-heatmap.js"></script>	
 
-
+		<!-- Wrapper that adapts LayerGroup usage to the new leaflet-marker-canvas plugin if present -->
+		<script src="js/markers_canvas_wrapper.js"></script>
 		<script src="js/parse_scripts.js" type="text/javascript"></script>
 
 	</head>
@@ -76,11 +77,11 @@
 			};
 			
 			var StreetLightsLowZoomLayer = new HeatmapOverlay(HeatMap_cfg);
-			var StreetLightsLayer = new L.LayerGroup([],{
+			var StreetLightsLayer = new L.CanvasMarkerLayer({
 				maxZoom : 19,
 				minZoom : MIN_ZOOM
 			});
-			var AviationLayer = new L.LayerGroup([],{
+			var AviationLayer = new L.CanvasMarkerLayer({
 				maxZoom : 19,
 				minZoom : MIN_ZOOM
 			});
