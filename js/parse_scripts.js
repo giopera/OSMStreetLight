@@ -20,6 +20,20 @@ var g_currentAjax = null;
 // Safety limit to avoid parsing extremely large responses that can freeze the browser
 var MAX_PARSE_ELEMENTS = 20000;
 
+// Diagnostic logger to locate blocking stages. Disabled by default now.
+var g_diagEnabled = false;
+var g_diag = [];
+function diag(tag, info) {
+	if (!g_diagEnabled) return;
+	try {
+		var now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+		g_diag.push({ t: now, tag: tag, info: info });
+		if (console && console.info) {
+			console.info('DIAG', tag, Math.round(now), info || '');
+		}
+	} catch (e) {}
+}
+
 function cacheTouch(key) {
 	// Move key to most-recent position using Map ordering: delete+set
 	if (!g_cache.has(key)) return;
@@ -76,13 +90,16 @@ function cacheAdd(key, value, isLatest) {
 // Show cached markers/ways that fall into the given bbox immediately.
 // north, west, south, east are numeric coordinates.
 function showCachedForBBox(north, west, south, east) {
+	diag('showCached-start', {north: north, west: west, south: south, east: east});
 	// clear visible layers first so we show only items for this bbox
 	StreetLightsLayer.clearLayers();
 	AviationLayer.clearLayers();
 	LitStreetsLayer.clearLayers();
 	UnLitStreetsLayer.clearLayers();
-
-	for (const [key, entry] of g_cache.entries()) {
+	let showCount = 0;
+	// iterate over a snapshot of cache entries to avoid mutation issues while touching entries
+	const cacheEntries = Array.from(g_cache.entries());
+	for (const [key, entry] of cacheEntries) {
 		try {
 			if (!entry) continue;
 			if (entry.type === 'node' && entry.lat && entry.lon && entry.markers && entry.markers.length) {
@@ -105,6 +122,7 @@ function showCachedForBBox(north, west, south, east) {
 					cacheTouch(key);
 					if (!g_latestCall.keys) g_latestCall.keys = new Set();
 					g_latestCall.keys.add(key);
+					showCount++;
 				}
 			} else if (entry.type === 'way' && entry.shape) {
 				// for ways, check bounding box of coordinates if available via shape.getBounds
@@ -126,12 +144,14 @@ function showCachedForBBox(north, west, south, east) {
 							cacheTouch(key);
 							if (!g_latestCall.keys) g_latestCall.keys = new Set();
 							g_latestCall.keys.add(key);
+							showCount++;
 						}
 					}
 				} catch(e) {}
 			}
 		} catch(e) {}
 	}
+	diag('showCached-end', {shown: showCount});
 }
 
 function loadXML(lat1,lon1,lat2,lon2, action) { //action: 0: map moved, 1: high zoom layer added, 2: low zoom layer added, 3: layer removed, 4: streetlights layer removed, 5: language updated
@@ -312,9 +332,14 @@ function loadData(bbox, north, west, south, east) {
 	g_latestCall.bbox = XMLRequestText;
 	g_latestCall.keys = new Set();
 
+	// diagnostic: request started
+	diag('loadData-start', { requestId: thisRequestId, zoom: map.getZoom() });
+
 	// show cached items for this bbox immediately (and protect their keys)
 	if (typeof north !== 'undefined') {
+		diag('loadData-before-showCached', { requestId: thisRequestId });
 		try { showCachedForBBox(north, west, south, east); } catch(e) {}
+		diag('loadData-after-showCached', { requestId: thisRequestId });
 	}
 	// Abort any previous request still running to avoid piling up work
 	try {
@@ -332,6 +357,7 @@ function loadData(bbox, north, west, south, east) {
 			g_currentAjax = null;
 			// basic validation: ensure we received an OSM XML doc or at least something containing <osm
 			let isXmlDoc = false;
+			let ajax_nodeCount = 0, ajax_wayCount = 0;
 			try {
 				isXmlDoc = (typeof data === 'object' && data !== null && data.documentElement && (data.documentElement.nodeName === 'osm' || data.documentElement.nodeName.toLowerCase && data.documentElement.nodeName.toLowerCase() === 'osm'));
 			} catch(e) { isXmlDoc = false; }
@@ -351,9 +377,9 @@ function loadData(bbox, north, west, south, east) {
 			// If we have XML, protect against extremely large responses
 			if (isXmlDoc) {
 				try {
-					const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
-					const wayCount = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
-					const total = nodeCount + wayCount;
+					ajax_nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+					ajax_wayCount = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
+					const total = ajax_nodeCount + ajax_wayCount;
 					if (total > MAX_PARSE_ELEMENTS) {
 						console.error('Overpass response too large (elements=' + total + '), skipping parse to avoid freeze');
 						if (loadingcounter==1) {
@@ -366,6 +392,8 @@ function loadData(bbox, north, west, south, east) {
 					}
 				} catch(e) {}
 			}
+			// diagnostic: AJAX success with element counts
+			diag('ajax-success', { isXmlDoc: !!isXmlDoc, nodes: ajax_nodeCount, ways: ajax_wayCount });
 			// only treat this response as "latest" if its id matches the most recently initiated request
 			const isLatest = (thisRequestId === g_latestCall.requestId);
 			if (loadingcounter==1) {
@@ -521,17 +549,20 @@ function parseOSM(data, isLatest)
 		return;
 	}
 	// If XML, guard against extremely large responses
+	let parse_nodes = 0, parse_ways = 0;
 	if (data && typeof data === 'object' && data.getElementsByTagName) {
 		try {
-			const nodeCount = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
-			const wayCount = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
-			if ((nodeCount + wayCount) > MAX_PARSE_ELEMENTS) {
-				console.error('parseOSM: response too large (elements=' + (nodeCount + wayCount) + '), skipping parse');
+			parse_nodes = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0;
+			parse_ways = (data.getElementsByTagName('way') && data.getElementsByTagName('way').length) || 0;
+			if ((parse_nodes + parse_ways) > MAX_PARSE_ELEMENTS) {
+				console.error('parseOSM: response too large (elements=' + (parse_nodes + parse_ways) + '), skipping parse');
 				if (isLatest) g_latestCall.keys = new Set();
 				return;
 			}
 		} catch(e) {}
 	}
+	// diagnostic: parse starting
+	diag('parseOSM-start', { nodes: parse_nodes, ways: parse_ways });
 
 	if (data === false) {
 		// when asked to remove data we also clear latestCall keys
@@ -754,8 +785,7 @@ function parseOSM(data, isLatest)
 				if (g_cache.has(cacheKey)) {
 					const cached = g_cache.get(cacheKey);
 					cacheTouch(cacheKey);
-					// re-add or refresh cached markers if available
-					console.debug && console.debug('cache hit:', cacheKey);
+					// re-add or refresh cached markers if available (cache hit)
 					if (cached.markers && cached.markers.length) {
 						// if we have per-marker infos, update icon/position per info
 						if (cached.markerInfos && cached.markerInfos.length && cached.markerInfos.length === cached.markers.length) {
@@ -911,7 +941,6 @@ function parseOSM(data, isLatest)
 					markerInfos: createdMarkerInfos
 				};
 				cacheAdd(cacheKey2, cacheValue2, !!isLatest);
-				console.debug && console.debug('cache add:', cacheKey2, 'markers:', createdMarkers.length);
 
 			}
 
@@ -993,6 +1022,8 @@ function parseOSM(data, isLatest)
 	});
 
 	// fadeout loading icon and reset loading counter
+	// diagnostic: parse finished
+	diag('parseOSM-end', { nodes: parse_nodes, ways: parse_ways });
 	if (loadingcounter<=0) {
 		loadingcounter = 0;
 		$( "#loading_cont" ).delay(500).fadeOut(100);
@@ -1035,6 +1066,10 @@ function parseOSMlowZoom(data, isLatest)
 			}
 		} catch(e) {}
 	}
+	// diagnostic for low-zoom parse
+	let low_nodes = 0;
+	try { if (data && data.getElementsByTagName) low_nodes = (data.getElementsByTagName('node') && data.getElementsByTagName('node').length) || 0; } catch(e) {}
+	diag('parseOSMlowZoom-start', { nodes: low_nodes });
 	$(data).find('node').each(function(){
 		let EleID = $(this).attr("id");
 		let EleCoordArray = new Array();
@@ -1087,6 +1122,7 @@ function parseOSMlowZoom(data, isLatest)
     data: LightsData
     };
 	StreetLightsLowZoomLayer.setData(lowZoomData)
+	diag('parseOSMlowZoom-end', { returned: LightsData.length || 0 });
 
 	// fadeout loading icon and reset loading counter
 	if (loadingcounter<=0) {
