@@ -11,6 +11,7 @@ L.Control.LanguageSelector = L.Control.extend({
             '<option value="en">EN</option>'+
             '<option value="de">DE</option>'+
             '<option value="fr">FR</option>'+
+            '<option value="it">IT</option>'+
             '<option value="ja">JA</option>'+
             '<option value="nl">NL</option>'+
             '<option value="ru">RU</option>'+
