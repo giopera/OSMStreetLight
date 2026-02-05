@@ -1,3 +1,4 @@
+
 <html>
 	<head>
 		<title>Street Lamps in OSM</title>
@@ -33,7 +34,8 @@
 		<script src="leaflet/plugins/LanguageSelector/LanguageSelector.js"></script>
 		<script src="leaflet/plugins/leaflet-control-geocoder/Control.Geocoder.js"></script>	
 		<script src="leaflet/plugins/heatmap.js/build/heatmap.js"></script>
-		<script src="leaflet/plugins/heatmap.js/plugins/leaflet-heatmap/leaflet-heatmap.js"></script>	
+		<script src="leaflet/plugins/heatmap.js/plugins/leaflet-heatmap/leaflet-heatmap.js"></script>
+		<script src="leaflet/plugins/leaflet-calendar/js/leaflet-calendar.js"></script>	
 
 		<!-- Wrapper that adapts LayerGroup usage to the new leaflet-marker-canvas plugin if present -->
 		<script src="js/markers_canvas_wrapper.js"></script>
@@ -195,6 +197,26 @@
 			if(window.location.search.indexOf("streets_unlit") != -1) {
 				map.addLayer(UnLitStreetsLayer);
 			}
+
+			var newer = L.control.calendar({
+      			id: 1,
+				minDate: "",
+				maxDate: "",
+				value: "",
+      			position: "topleft",
+				onSelectDate: (value) => MoveCall(0)
+    		});
+			newer.addTo(this.map);
+
+			var older = L.control.calendar({
+      			id: 2,
+				minDate: "",
+				maxDate: "",
+				value: "",
+      			position: "topleft",
+				onSelectDate: (value) => MoveCall(0)
+    		});
+			older.addTo(this.map);
 
 			
 			//Trigger reload when layers are added or removed

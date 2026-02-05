@@ -2,6 +2,10 @@ function MoveCall(action) { //action: 0: map moved, 1: high zoom layer added, 2:
 	const coords = map.getBounds();
 	const lefttop = coords.getNorthWest();
 	const rightbottom = coords.getSouthEast();
+	if(action == 6){
+		action = 0;
+		
+	}
 	loadXML(lefttop.lat,lefttop.lng,rightbottom.lat,rightbottom.lng, action);
 }
 
@@ -99,6 +103,36 @@ function cacheAdd(key, value, isLatest) {
 		if (!g_latestCall.keys) g_latestCall.keys = new Set();
 		g_latestCall.keys.add(key);
 	}
+}
+
+// Clear entire in-memory cache and remove any map objects to free memory.
+function clearCache() {
+	try {
+		for (const [key, val] of g_cache.entries()) {
+			try {
+				if (!val) continue;
+				if (val.markers && val.markers.length) {
+					val.markers.forEach(function(m) { try { if (m.remove) m.remove(); } catch(e){} });
+				}
+				if (val.shape && val.shape.remove) {
+					try { val.shape.remove(); } catch(e){}
+				}
+			} catch(e) {}
+		}
+	} catch(e) {}
+
+	// Reset cache and latest-call tracking
+	g_cache = new Map();
+	g_latestCall = { bbox: "", keys: new Set() };
+
+	// Clear visible layers and low-zoom data to ensure UI matches cleared cache
+	try {
+		if (typeof StreetLightsLayer !== 'undefined' && StreetLightsLayer && StreetLightsLayer.clearLayers) StreetLightsLayer.clearLayers();
+		if (typeof AviationLayer !== 'undefined' && AviationLayer && AviationLayer.clearLayers) AviationLayer.clearLayers();
+		if (typeof LitStreetsLayer !== 'undefined' && LitStreetsLayer && LitStreetsLayer.clearLayers) LitStreetsLayer.clearLayers();
+		if (typeof UnLitStreetsLayer !== 'undefined' && UnLitStreetsLayer && UnLitStreetsLayer.clearLayers) UnLitStreetsLayer.clearLayers();
+		if (typeof StreetLightsLowZoomLayer !== 'undefined' && StreetLightsLowZoomLayer && StreetLightsLowZoomLayer.setData) StreetLightsLowZoomLayer.setData({max:8, data:[]});
+	} catch(e) {}
 }
 
 // Show cached markers/ways that fall into the given bbox immediately.
@@ -315,19 +349,78 @@ function loadData(bbox, north, west, south, east) {
 	$( "#loading_cont" ).fadeIn(100)
 	loadingcounter++;
 
+	if(new Date(newer.getCurrentDate()) >= new Date(older.getCurrentDate())){
+		let tmp = older.getCurrentDate();
+		older.setDate(newer.getCurrentDate());
+		newer.setDate(tmp);
+	}
+
 	//CrossoverAPI XML request
 	// Street Light query
-	XMLRequestText = "[timeout: " + TIMEOUT + "]" + bbox + '( node["highway"="street_lamp"]; node["light_source"]; node["tower:type"="lighting"]; node["aeroway"="navigationaid"];'
+	XMLRequestText = "[timeout: " + TIMEOUT + "]" + bbox + '(';
+	
+	XMLRequestText += '(node["highway"="street_lamp"]';
+	if(newer.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+	}
+	XMLRequestText += ';';
+	if(older.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += ' - node["highway"="street_lamp"](newer:"' + older.getCurrentDate() +'");';
+	}
+	XMLRequestText += '); ';
+
+	XMLRequestText += '(node["light_source"]';
+	if(newer.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+	}
+	XMLRequestText += ';';
+	if(older.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += ' - node["light_source"](newer:"' + older.getCurrentDate() +'");';
+	}
+	XMLRequestText += '); ';
+
+	XMLRequestText += '(node["tower:type"="lighting"]';
+	if(newer.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+	}
+	XMLRequestText += ';';
+	if(older.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += ' - node["tower:type"="lighting"](newer:"' + older.getCurrentDate() +'");';
+	}
+	XMLRequestText += '); ';
+
+	XMLRequestText += '(node["aeroway"="navigationaid"]';
+	if(newer.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+	}
+	XMLRequestText += ';';
+	if(older.getCurrentDate() != "T00:00:00"){
+		XMLRequestText += ' - node["aeroway"="navigationaid"](newer:"' + older.getCurrentDate() +'");';
+	}
+	XMLRequestText += '); ';
 
 	today = new Date();
 	if (today.getMonth() == 11) { // show christmas trees only in December
-		XMLRequestText += 'node["xmas:feature"="tree"];'
+
+		XMLRequestText += '(node["xmas:feature"="tree"]';
+		if(newer.getCurrentDate() != "T00:00:00"){
+			XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+		}
+		XMLRequestText += ';';
+		if(older.getCurrentDate() != "T00:00:00"){
+			XMLRequestText += ' - node["xmas:feature"="tree"](newer:"' + older.getCurrentDate() +'");';
+		}
+		XMLRequestText += '); ';
 	}
 
 	if (map.hasLayer(LitStreetsLayer) || map.hasLayer(UnLitStreetsLayer)) {
-		XMLRequestText += '(way["highway"][!area]["lit"]; >;); ' +
-			'(way["highway"][area]["lit"]; >;); ';
+		XMLRequestText += '(way["highway"]["lit"]';
+		if(newer.getCurrentDate() != "T00:00:00"){
+			XMLRequestText += '(newer:"' + newer.getCurrentDate() +'")';
+		}
+		XMLRequestText += '; >;); ';
 	}
+
 	XMLRequestText += '); out qt; '
 	//console.log ( XMLRequestText );
 
@@ -463,6 +556,9 @@ function loadDataLowZoom(bbox)
 	else {
 		RequestProtocol = "http://";
 	}
+	let newer = "";
+
+	if(L.contr)
 
 	XMLRequestTextLowZoom = "[timeout: " + TIMEOUT + "]" + bbox + '( node["highway"="street_lamp"]; node["light_source"];); out skel;'
 	RequestURLlowZoom = RequestProtocol + "overpass-api.de/api/interpreter?data=" + XMLRequestTextLowZoom;
