@@ -181,7 +181,9 @@
 			var ort = new L.LatLng(41.312, 12.766);
 			map.setView(ort, 6).addLayer(current_layer);
 			// Request rough IP-based location if none is found in URL
-
+			if (document.URL.search(/#/)==-1){
+				L.GeoLocation.centerMapOnPosition(map, 8)
+			}
 
 			// Default layers
 			map.addLayer(StreetLightsLayer);
